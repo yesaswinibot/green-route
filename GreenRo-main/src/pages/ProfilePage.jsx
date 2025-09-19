@@ -8,8 +8,18 @@ import {
   formatDistance,
   formatEmission,
   formatDuration,
-  getEnvironmentalInsights
+  getEnvironmentalInsights,
+  getAverageEcoScore
 } from "../services/carbonTrackingService";
+
+// Helper function to group trips by mode
+const getTripsByMode = (trips) => {
+  return trips.reduce((acc, trip) => {
+    const mode = trip.selectedRoute?.mode || 'unknown';
+    acc[mode] = (acc[mode] || 0) + 1;
+    return acc;
+  }, {});
+};
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -22,26 +32,61 @@ export default function ProfilePage() {
   const fetchUserData = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
+      
+      // Check if user has valid ID
+      if (!user?.id) {
+        console.warn('No user ID available, using mock data');
+        setTrips([]);
+        setCarbonSummary({
+          totalEmissionSavings: 0,
+          totalTrips: 0,
+          totalDistance: 0,
+          averageEcoScore: 0,
+          tripsByMode: {}
+        });
+        setLoading(false);
+        return;
+      }
+      
       const [tripsData, summaryData] = await Promise.all([
         getUserTrips(user.id, { limit: 20 }),
         getCarbonSummary(user.id)
       ]);
       
-      setTrips(tripsData.trips || []);
-      setCarbonSummary(summaryData);
+      const trips = tripsData.trips || [];
+      setTrips(trips);
+      
+      // Calculate additional summary data from trips
+      const calculatedSummary = {
+        ...summaryData,
+        averageEcoScore: getAverageEcoScore(trips),
+        tripsByMode: getTripsByMode(trips)
+      };
+      
+      setCarbonSummary(calculatedSummary);
     } catch (err) {
       console.error('Error fetching user data:', err);
       setError('Failed to load your data. Please try again.');
+      // Set empty data on error
+      setTrips([]);
+      setCarbonSummary({
+        totalEmissionSavings: 0,
+        totalTrips: 0,
+        totalDistance: 0,
+        averageEcoScore: 0,
+        tripsByMode: {}
+      });
     } finally {
       setLoading(false);
     }
   }, [user?.id]);
 
   useEffect(() => {
-    if (user?.id) {
+    if (user) {
       fetchUserData();
     }
-  }, [user?.id, fetchUserData]);
+  }, [user, fetchUserData]);
 
   const handleTripStatusUpdate = async (tripId, newStatus) => {
     try {

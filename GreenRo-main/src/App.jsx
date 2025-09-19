@@ -6,6 +6,7 @@ import SignupPage from "./pages/SignupPage";
 import ProfilePage from "./pages/ProfilePage";
 import MapPage from "./pages/MapPage";
 import NavigationPage from "./pages/NavigationPage";
+import DriverDashboard from "./pages/DriverDashboard";
 import Navbar from "./components/NavBar";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -58,6 +59,14 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <NavigationPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/driver-dashboard" 
+          element={
+            <ProtectedRoute>
+              <DriverDashboard />
             </ProtectedRoute>
           } 
         />

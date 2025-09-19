@@ -27,10 +27,32 @@ export default function Navbar() {
           <>
             <span style={{ color: "#7f8c8d", marginRight: "1rem" }}>
               Welcome, {user?.name || user?.email}
+              {user?.userType === 'driver' && (
+                <span style={{ 
+                  background: "#27ae60", 
+                  color: "white", 
+                  padding: "0.2rem 0.5rem", 
+                  borderRadius: "12px", 
+                  fontSize: "0.8rem", 
+                  marginLeft: "0.5rem" 
+                }}>
+                  🚗 Driver
+                </span>
+              )}
             </span>
-            <Link to="/map">Map</Link>
-            <Link to="/navigation">Navigation</Link>
-            <Link to="/profile">Profile</Link>
+            {user?.userType === 'driver' ? (
+              <>
+                <Link to="/driver-dashboard">Dashboard</Link>
+                <Link to="/navigation">Navigation</Link>
+                <Link to="/profile">Profile</Link>
+              </>
+            ) : (
+              <>
+                <Link to="/map">Map</Link>
+                <Link to="/navigation">Navigation</Link>
+                <Link to="/profile">Profile</Link>
+              </>
+            )}
             <button 
               onClick={logout}
               style={{ 

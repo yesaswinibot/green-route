@@ -2,8 +2,10 @@
 import React, { useState } from "react";
 import Stepper from "../pages/Stepper";
 import MapComponent from "../components/MapComponents"; // Mapbox component
+import VehicleSelector from "../components/VehicleSelector";
 import axios from "axios";
 import { fetchAlternativeRoutes, calculateEmissionSavings, getEmissionComparison } from "../services/routeService";
+import { calculateEmissionWithExternalAPI, calculateEmissionSavings as calculateEnhancedSavings, getEmissionComparison as getEnhancedComparison } from "../services/emissionCalculationService";
 
 export default function NavigationPage() {
   const steps = ["Input", "Compare Routes", "Confirm"];
@@ -12,12 +14,59 @@ export default function NavigationPage() {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [mode, setMode] = useState("driving");
+  const [selectedVehicle, setSelectedVehicle] = useState("petrol_medium");
 
   const [routes, setRoutes] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(false);
   const [shortestRoute, setShortestRoute] = useState(null);
   const [sortBy, setSortBy] = useState("distance"); // distance, duration, emission
+
+  // Calculate eco score based on distance, duration, mode, and vehicle type
+  const calculateEcoScore = (distance, duration, mode, vehicleType) => {
+    const distanceKm = distance / 1000;
+    const durationHours = duration / 3600;
+    
+    let score = 100;
+    
+    // Penalize longer distances
+    score -= Math.min(distanceKm * 0.5, 30);
+    
+    // Penalize longer durations
+    score -= Math.min(durationHours * 10, 20);
+    
+    // Vehicle type bonuses/penalties
+    const vehicleBonuses = {
+      electric: 20,
+      hybrid: 15,
+      petrol_small: 10,
+      diesel_small: 8,
+      petrol_medium: 5,
+      diesel_medium: 3,
+      petrol_large: 0,
+      diesel_large: -2,
+      electric_scooter: 25,
+      petrol_scooter: 12,
+      petrol_motorcycle: 8,
+      city_bus: 15,
+      intercity_bus: 12,
+      electric_bus: 20
+    };
+    
+    score += vehicleBonuses[vehicleType] || 0;
+    
+    // Mode bonuses
+    const modeBonuses = {
+      walking: 20,
+      bicycling: 15,
+      transit: 10,
+      driving: 0
+    };
+    
+    score += modeBonuses[mode] || 0;
+    
+    return Math.max(0, Math.min(100, Math.round(score)));
+  };
 
   // Mock data for testing when backend is not available
   const getMockRoutes = () => {
@@ -51,7 +100,7 @@ export default function NavigationPage() {
     if (!origin || !destination) return alert("Enter origin and destination");
     setLoading(true);
     try {
-      console.log("Fetching alternative routes with params:", { origin, destination, mode });
+      console.log("Fetching alternative routes with params:", { origin, destination, mode, selectedVehicle });
       
       // Use the new route service to get real alternative routes
       const routeData = await fetchAlternativeRoutes(origin, destination, mode);
@@ -64,8 +113,28 @@ export default function NavigationPage() {
         return;
       }
       
+      // Calculate enhanced emissions for each route using external API
+      const routesWithEnhancedEmissions = await Promise.all(
+        routeData.routes.map(async (route) => {
+          const emissionData = await calculateEmissionWithExternalAPI(
+            route.distance, 
+            mode, 
+            selectedVehicle, 
+            origin, 
+            destination
+          );
+          
+          return {
+            ...route,
+            emission: emissionData.co2e,
+            emissionData: emissionData,
+            ecoScore: calculateEcoScore(route.distance, route.duration, mode, selectedVehicle)
+          };
+        })
+      );
+      
       // Calculate emission savings for all routes
-      const routesWithSavings = calculateEmissionSavings(routeData.routes);
+      const routesWithSavings = calculateEnhancedSavings(routesWithEnhancedEmissions);
       
       // Sort routes by distance to find shortest
       const sortedRoutes = [...routesWithSavings].sort((a, b) => a.distance - b.distance);
@@ -144,9 +213,11 @@ export default function NavigationPage() {
           emission: selected.emission,
           ecoScore: selected.ecoScore,
           mode: selected.mode,
+          vehicleType: selectedVehicle,
           profile: selected.profile || selected.mode,
           geometry: selected.geometry || null,
-          instructions: selected.instructions || []
+          instructions: selected.instructions || [],
+          emissionData: selected.emissionData || null
         },
         alternativeRoutes: routes.filter(r => r.id !== selected.id).map(route => ({
           id: route.id,
@@ -195,12 +266,30 @@ export default function NavigationPage() {
           <label>Destination</label>
           <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="e.g. Pune" />
           <label>Mode</label>
-          <select value={mode} onChange={e => setMode(e.target.value)}>
+          <select value={mode} onChange={e => {
+            setMode(e.target.value);
+            // Reset vehicle selection when mode changes
+            if (e.target.value === 'driving') {
+              setSelectedVehicle('petrol_medium');
+            } else if (e.target.value === 'motorcycle') {
+              setSelectedVehicle('petrol_scooter');
+            } else if (e.target.value === 'bus') {
+              setSelectedVehicle('city_bus');
+            }
+          }}>
             <option value="driving">Car</option>
+            <option value="motorcycle">Motorcycle</option>
+            <option value="bus">Bus</option>
             <option value="transit">Transit</option>
             <option value="bicycling">Bicycle</option>
             <option value="walking">Walking</option>
           </select>
+          
+          <VehicleSelector 
+            mode={mode}
+            selectedVehicle={selectedVehicle}
+            onVehicleChange={(vehicle) => setSelectedVehicle(vehicle.id)}
+          />
           <div style={{ marginTop: 12, display: "flex", gap: "1rem", flexWrap: "wrap" }}>
             <button onClick={fetchRoutes} disabled={loading}>
               {loading ? "Loading..." : "Find Routes"}
@@ -244,7 +333,12 @@ export default function NavigationPage() {
             }}>
               <h4>🏆 Shortest Distance Route</h4>
               <p><strong>{(shortestRoute.distance/1000).toFixed(2)} km</strong> • {Math.round(shortestRoute.duration/60)} mins • {shortestRoute.emission.toFixed(3)} kg CO₂</p>
-              <p>EcoScore: {shortestRoute.ecoScore}/100 • Mode: {shortestRoute.mode}</p>
+              <p>EcoScore: {shortestRoute.ecoScore}/100 • Mode: {shortestRoute.mode} • Vehicle: {shortestRoute.vehicleType || 'N/A'}</p>
+              {shortestRoute.emissionData && (
+                <p style={{ fontSize: '0.9rem', opacity: 0.9 }}>
+                  Source: {shortestRoute.emissionData.source} • Method: {shortestRoute.emissionData.calculation_method}
+                </p>
+              )}
             </div>
           )}
 
@@ -344,7 +438,12 @@ export default function NavigationPage() {
                     </div>
                   )}
                   <div><strong>Route {idx+1}</strong> — Distance: <strong>{(r.distance/1000).toFixed(2)} km</strong>, Duration: {Math.round(r.duration/60)} mins</div>
-                  <div>Emissions: <strong>{r.emission.toFixed(3)} kg CO₂</strong> — EcoScore: <strong>{r.ecoScore}/100</strong> — Mode: <strong>{r.mode}</strong></div>
+                  <div>Emissions: <strong>{r.emission.toFixed(3)} kg CO₂</strong> — EcoScore: <strong>{r.ecoScore}/100</strong> — Mode: <strong>{r.mode}</strong> — Vehicle: <strong>{r.vehicleType || 'N/A'}</strong></div>
+                  {r.emissionData && (
+                    <div style={{ fontSize: '0.85rem', color: '#7f8c8d', marginTop: '0.25rem' }}>
+                      Source: {r.emissionData.source} • Method: {r.emissionData.calculation_method}
+                    </div>
+                  )}
                   {r.emissionSavings > 0 && (
                     <div style={{ color: "#27ae60", fontWeight: "bold", marginTop: "0.5rem" }}>
                       🌱 Saves {r.emissionSavings.toFixed(3)} kg CO₂ ({r.emissionSavingsPercent}% less emissions)
